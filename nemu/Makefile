@@ -33,6 +33,39 @@ NAME    = $(GUEST_ISA)-nemu-$(ENGINE)
 FILELIST_MK = $(shell find -L ./src -name "filelist.mk")
 include $(FILELIST_MK)
 
+# Count lines of all .c/.h files under nemu/.
+# Usage:
+#   make count
+#   make count BASE=pa0
+#   make count BASE=<commit-or-branch>
+BASE ?= pa0
+COUNT_DIRS ?= nemu
+
+count:
+	@cd $(NEMU_HOME)/.. && \
+	files=$$(find $(COUNT_DIRS) -type f \( -name '*.c' -o -name '*.h' \)); \
+	total=$$(printf '%s\n' "$$files" | xargs awk 'END { print NR }' | awk '{s += $$1} END {print s + 0}'); \
+	nonblank=$$(printf '%s\n' "$$files" | xargs awk 'NF { n++ } END { print n }' | awk '{s += $$1} END {print s + 0}'); \
+	echo "current total lines: $$total"; \
+	echo "current nonblank lines: $$nonblank"; \
+	if git rev-parse --verify --quiet $(BASE) >/dev/null; then \
+	  base_files=$$(git ls-tree -r --name-only $(BASE) -- $(COUNT_DIRS) | awk '/\.(c|h)$$$$/ {print}'); \
+	  if [ -z "$$base_files" ]; then \
+	    echo "base ref '$(BASE)' exists, but no .c/.h files were found under $(COUNT_DIRS)"; \
+	  else \
+	    base_total=$$(printf '%s\n' "$$base_files" | xargs -I{} git show $(BASE):{} | awk 'END {s += NR} END {print s + 0}'); \
+	    base_nonblank=$$(printf '%s\n' "$$base_files" | xargs -I{} git show $(BASE):{} | awk 'NF {n++} END {s += n} END {print s + 0}'); \
+	    echo "$(BASE) total lines: $$base_total"; \
+	    echo "$(BASE) nonblank lines: $$base_nonblank"; \
+	    echo "PA1 added total lines: $$((total - base_total))"; \
+	    echo "PA1 added nonblank lines: $$((nonblank - base_nonblank))"; \
+	  fi; \
+	else \
+	  echo "base ref '$(BASE)' not found; create/fetch pa0 or run: make count BASE=<commit-or-branch>"; \
+	fi
+
+.PHONY: count
+
 # Filter out directories and files in blacklist to obtain the final set of source files
 DIRS-BLACKLIST-y += $(DIRS-BLACKLIST)
 SRCS-BLACKLIST-y += $(if $(DIRS-BLACKLIST-y), $(shell find -L $(DIRS-BLACKLIST-y) -name "*.c"),)

@@ -18,11 +18,16 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "sdb.h"
+// my add
+#include <memory/vaddr.h>
 
 static int is_batch_mode = false;
 
 void init_regex();
 void init_wp_pool();
+void watchpoint_new(char *e);
+void free_wp(int no);
+void display_watchpoints();
 
 /* We use the `readline' library to provide more flexibility to read from stdin. */
 static char* rl_gets() {
@@ -49,10 +54,146 @@ static int cmd_c(char *args) {
 
 
 static int cmd_q(char *args) {
+  nemu_state.state = NEMU_QUIT;
   return -1;
 }
 
 static int cmd_help(char *args);
+
+static int cmd_si(char *args) {
+  long n = 1;
+
+  if(args != NULL) {
+    char *end = NULL;
+    n = strtol(args, &end, 10);
+    if (end == args || *end != '\0' || n <= 0) {
+      printf("Usage: si [N]\n");
+      return 0;
+    }
+  }
+    cpu_exec(n);
+    return 0;
+}
+
+static int cmd_info(char *args) {
+  if (args == NULL) {
+    printf("Usage: info r\n");
+    return 0;
+  }
+  if (strcmp(args, "r") == 0) {
+    isa_reg_display();
+  }
+  else if (strcmp(args, "w") == 0) {
+    display_watchpoints();
+  }
+  else {
+    printf("Unknown subcommand '%s'\n", args);
+  }
+  return 0;
+}
+
+static int cmd_x(char *args) {
+  if (args == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+
+  char *n_str = strtok(args, " ");
+  char *expr_str = strtok(NULL, " ");
+
+  if (n_str == NULL || expr_str == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+  long n = strtol(n_str, NULL, 10);
+
+  char *end = NULL;
+  word_t addr = strtoul(expr_str, &end, 0);
+  if (end == expr_str || *end != '\0') {
+    printf("EXPR should be a number, such as 0x80000000\n");
+    return 0;
+  }
+  if (addr < 0x80000000 || addr + (n - 1) * 4 > 0x87ffffff) {
+    printf("EXPR should be bewteen [0x80000000, 0x87ffffff]\n");
+    return 0;
+  }
+
+  // long expr_x = strtol(expr_str, &end, 10);
+
+  // if (*end != 'x' || expr_x != 0) {
+  //   printf("EXPR should be 0x...\n");
+  //   return 0;
+  // }
+  // expr_x = strtol(end + 1, &end, 16);
+  // if(*end != '\0') {
+  //   printf("EXPR should be 0x...\n");
+  //   return 0;
+  // }
+  // word_t addr = expr_x;
+
+  // 后续处理
+  // bool sucess = true;
+  // word_t addr = expr(expr_str, &sucess);
+
+  // if (!sucess) {
+  //   printf("Bad expression\n");
+  //   return 0;
+  // }
+  
+  for (int i = 0;i < (int)n ; i++) {
+    word_t data = vaddr_read(addr + i * 4, 4);
+    printf("0x%08x:0x%08x\n", addr + i * 4, data);
+  }
+
+  return 0;
+
+}
+
+static int cmd_p(char *args) {
+  if (args == NULL) {
+    printf("Usage: p EXPR\n");
+    return 0;
+  }
+
+  bool success = true;
+  word_t result = expr(args, &success);
+
+  if (success != true) {
+    printf("表达式出错！\n");
+  }
+  else {
+    printf(FMT_WORD "\n", result);
+  }
+
+  return 0;
+}
+
+static int cmd_w(char *args) {
+  if (args == NULL) {
+    printf("Usage: w EXPR\n");
+    return 0;
+  }
+
+  watchpoint_new(args);
+  return 0;
+}
+
+static int cmd_d(char *args) {
+  if (args == NULL) {
+    printf("Usage: d N\n");
+    return 0;
+  }
+
+  char *end = NULL;
+  long no = strtol(args, &end, 10);
+  if (end == args || *end != '\0' || no < 0) {
+    printf("Usage: d N\n");
+    return 0;
+  }
+
+  free_wp(no);
+  return 0;
+}
 
 static struct {
   const char *name;
@@ -64,6 +205,12 @@ static struct {
   { "q", "Exit NEMU", cmd_q },
 
   /* TODO: Add more commands */
+  { "si", "Step N instruction", cmd_si },
+  { "info", "Print program state", cmd_info },
+  { "x", "Scan memory", cmd_x },
+  { "p", "Evaluate expression", cmd_p },
+  { "w", "Set watchpoint", cmd_w },
+  { "d", "Delete watchpoint", cmd_d },
 
 };
 
@@ -96,6 +243,7 @@ void sdb_set_batch_mode() {
   is_batch_mode = true;
 }
 
+// 拆命令名和参数
 void sdb_mainloop() {
   if (is_batch_mode) {
     cmd_c(NULL);
@@ -114,6 +262,7 @@ void sdb_mainloop() {
      */
     char *args = cmd + strlen(cmd) + 1;
     if (args >= str_end) {
+      // 如果cmd后面没有参数了，就把args置为NULL
       args = NULL;
     }
 
